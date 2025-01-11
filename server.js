@@ -3,9 +3,11 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { encoding_for_model } = require('tiktoken');
 require('dotenv').config();
+const axios = require('axios'); // Import axios
 
 const app = express();
 const PORT = process.env.PORT || 3001; 
+const SLACK_URL = process.env.SLACK_WEBHOOK_URL;
 
 // Middleware for CORS
 app.use(cors());
@@ -81,6 +83,26 @@ app.post('/calculate', (req, res) => {
   } catch (error) {
     console.error('Error calculating tokens:', error);
     res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// Slack Webhook Route
+app.post('/send-to-slack', async (req, res) => {
+  const { error, errorInfo } = req.body;
+  const slackWebhookUrl = `${SLACK_URL}`; // Replace with your webhook URL
+
+  const message = {
+    text: `🚨 *Error Report* 🚨\n*Message:* ${error.message}\n*Stack:* ${error.stack || 'No stack trace available'}\n*Component Stack:* ${errorInfo.componentStack || 'No component stack available'}`,
+  };
+
+  console.log("message", message);
+
+  try {
+    await axios.post(slackWebhookUrl, message); // Use axios to send the Slack message
+    res.status(200).send({ success: true });
+  } catch (slackError) {
+    console.error('Failed to send error to Slack:', slackError);
+    res.status(500).send({ success: false, error: slackError.message });
   }
 });
 
