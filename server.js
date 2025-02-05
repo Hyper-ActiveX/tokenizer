@@ -13,7 +13,9 @@ const SLACK_URL = process.env.SLACK_WEBHOOK_URL;
 app.use(cors());
 
 // Middleware to parse JSON
-app.use(bodyParser.json());
+// app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' })); // Adjust the limit as needed
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // GPT Model Pricing
 const MODEL_PRICING = {
@@ -26,7 +28,7 @@ app.post('/calculate', (req, res) => {
   try {
     console.log('Request received for /calculate');
     const { qaPairs, prompts, model, outputTokens } = req.body;
-    console.log(qaPairs, prompts, model, outputTokens);
+    // console.log(qaPairs, prompts, model, outputTokens);
 
     // Validate input
     if (!qaPairs || !prompts || !model) {
@@ -83,26 +85,6 @@ app.post('/calculate', (req, res) => {
   } catch (error) {
     console.error('Error calculating tokens:', error);
     res.status(500).json({ error: 'Internal server error.' });
-  }
-});
-
-// Slack Webhook Route
-app.post('/send-to-slack', async (req, res) => {
-  const { error, errorInfo } = req.body;
-  const slackWebhookUrl = `${SLACK_URL}`; // Replace with your webhook URL
-
-  const message = {
-    text: `🚨 *Error Report* 🚨\n*Message:* ${error.message}\n*Stack:* ${error.stack || 'No stack trace available'}\n*Component Stack:* ${errorInfo.componentStack || 'No component stack available'}`,
-  };
-
-  console.log("message", message);
-
-  try {
-    await axios.post(slackWebhookUrl, message); // Use axios to send the Slack message
-    res.status(200).send({ success: true });
-  } catch (slackError) {
-    console.error('Failed to send error to Slack:', slackError);
-    res.status(500).send({ success: false, error: slackError.message });
   }
 });
 
