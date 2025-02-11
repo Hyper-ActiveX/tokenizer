@@ -23,60 +23,67 @@ const MODEL_PRICING = {
   'gpt-4o-mini': { input: 0.150, output: 0.600 },
 };
 
+// Add these constants at the top with other constants
+const MAX_CHUNK_SIZE = 100;
+const DEFAULT_MODEL = "gpt-4o";
+
 // Token Calculator API
 app.post('/calculate', (req, res) => {
   try {
     console.log('Request received for /calculate');
-    const { qaPairs, prompts, model, outputTokens } = req.body;
-    // console.log(qaPairs, prompts, model, outputTokens);
+    const { qaPairs, outputTokens, agents } = req.body;
 
     // Validate input
-    if (!qaPairs || !prompts || !model) {
+    if (!qaPairs || !agents) {
       return res.status(400).json({ error: 'Invalid input. All fields are required.' });
     }
-    if (!MODEL_PRICING[model]) {
-      return res.status(400).json({ error: 'Invalid model. Supported models: ' + Object.keys(MODEL_PRICING).join(', ') });
-    }
 
-    // Initialize tokenizer
-    let encoding;
-    try {
-      encoding = encoding_for_model(model);
-    } catch (error) {
-      // Fallback for unsupported models
-      console.warn(`Model "${model}" is not directly supported by tiktoken. Using fallback encoding.`);
-      encoding = encoding_for_model('gpt-4-turbo');
-    }
-
-    // Calculate tokens
+    // Initialize counters
     let totalTokens = 0;
     let totalOutputTokens = 0;
     let countTotalEvaluation = 0;
+    let totalCost = 0;
 
-    prompts.forEach((prompt) => {
-      let promptTokens = 0;
-      qaPairs.forEach(({ question, answer }) => {
-        const qaText = `${question} ${answer}`;
-        const combinedText = `${qaText} ${prompt}`;
-        promptTokens += encoding.encode(combinedText).length;
-        totalOutputTokens += outputTokens;
-        countTotalEvaluation++;
-      });
-      console.log("totalOutputTokens", totalOutputTokens)
-      totalTokens += promptTokens;
+    // Pre-compute agent-specific static content with their individual models
+    const agentStaticTokens = agents.map(agent => {
+      const model = agent.model || DEFAULT_MODEL;
+      const encoding = encoding_for_model(model);
+      const total_SGR_text = agent.sample_good_response.join(" ");
+      const total_SBR_text = agent.sample_bad_response.join(" ");
+      const staticText = `${agent.prompt} ${total_SBR_text} ${total_SGR_text}`;
+      return {
+        staticTokenCount: encoding.encode(staticText).length,
+        model,
+        encoding,
+        agent
+      };
     });
 
+    // Process in chunks
+    for (let i = 0; i < qaPairs.length; i += MAX_CHUNK_SIZE) {
+      const chunk = qaPairs.slice(i, i + MAX_CHUNK_SIZE);
+      
+      // Calculate tokens for each agent-qa combination
+      agentStaticTokens.forEach(({ staticTokenCount, model, encoding, agent }) => {
+        chunk.forEach(({ question, answer }) => {
+          const qaText = `${question} ${answer}`;
+          const qaTokenCount = encoding.encode(qaText).length;
+          const promptTokens = qaTokenCount + staticTokenCount;
+          
+          totalTokens += promptTokens;
+          totalOutputTokens += outputTokens;
+          countTotalEvaluation++;
 
-    // Calculate cost
-    const modelPricing = MODEL_PRICING[model];
-    const inputTokenCost = (((totalTokens)/1000000) * modelPricing.input);
-    const outputTokenCost = ((totalOutputTokens/1000000)* modelPricing.output);
-
-    const totalCost = inputTokenCost + outputTokenCost;
+          // Calculate cost using agent-specific model pricing
+          const inputTokenCost = ((promptTokens/1000000) * MODEL_PRICING[model].input);
+          const outputTokenCost = ((outputTokens/1000000) * MODEL_PRICING[model].output);
+          totalCost += (inputTokenCost + outputTokenCost);
+        });
+      });
+    }
 
     // Response
     res.json({
-      model,
       totalTokens,
       totalOutputTokens,
       countTotalEvaluation,
