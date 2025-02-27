@@ -6,8 +6,7 @@ require('dotenv').config();
 const axios = require('axios'); // Import axios
 
 const app = express();
-const PORT = process.env.PORT || 3001; 
-const SLACK_URL = process.env.SLACK_WEBHOOK_URL;
+const PORT = process.env.PORT || 3001;
 
 // Middleware for CORS
 app.use(cors());
