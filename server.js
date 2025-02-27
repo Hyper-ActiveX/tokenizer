@@ -38,55 +38,62 @@ app.post('/calculate', (req, res) => {
       return res.status(400).json({ error: 'Invalid input. All fields are required.' });
     }
 
+    const agentCount = agents.length;
+    const qa_count = qaPairs.length;
+    console.log("agentCount", agentCount);
+    console.log("qa_count", qa_count);
+
     // Initialize counters
     let totalTokens = 0;
     let totalOutputTokens = 0;
-    let countTotalEvaluation = 0;
     let totalCost = 0;
 
-    // Pre-compute agent-specific static content with their individual models
+    // Use a single encoding instance for all calculations
+    const encoding = encoding_for_model(DEFAULT_MODEL);
+
+    // 1. Calculate QA pairs tokens in one pass - O(n)
+    const qaTokens = qaPairs.reduce((acc, { question, answer }) => {
+      return acc + encoding.encode(`${question} ${answer}`).length;
+    }, 0);
+
+    // 2. Calculate static tokens for each agent in one pass - O(m)
     const agentStaticTokens = agents.map(agent => {
       const model = agent.model || DEFAULT_MODEL;
-      const encoding = encoding_for_model(model);
-      const total_SGR_text = agent.sample_good_response.join(" ");
-      const total_SBR_text = agent.sample_bad_response.join(" ");
-      const staticText = `${agent.prompt} ${total_SBR_text} ${total_SGR_text}`;
+      const staticText = `${agent.prompt} ${agent.sample_bad_response.join(" ")} ${agent.sample_good_response.join(" ")}`;
       return {
-        staticTokenCount: encoding.encode(staticText).length,
-        model,
-        encoding,
-        agent
+        tokens: encoding.encode(staticText).length,
+        model
       };
     });
 
-    // Process in chunks
-    for (let i = 0; i < qaPairs.length; i += MAX_CHUNK_SIZE) {
-      const chunk = qaPairs.slice(i, i + MAX_CHUNK_SIZE);
+    // 3. Calculate final totals in one pass - O(m)
+    const totalStaticTokens = agentStaticTokens.reduce((acc, { tokens, model }) => {
+      // Calculate per agent
+      const agentTotalTokens = qaTokens + (tokens * qa_count);
+      const agentOutputTokens = outputTokens * qa_count;
       
-      // Calculate tokens for each agent-qa combination
-      agentStaticTokens.forEach(({ staticTokenCount, model, encoding, agent }) => {
-        chunk.forEach(({ question, answer }) => {
-          const qaText = `${question} ${answer}`;
-          const qaTokenCount = encoding.encode(qaText).length;
-          const promptTokens = qaTokenCount + staticTokenCount;
-          
-          totalTokens += promptTokens;
-          totalOutputTokens += outputTokens;
-          countTotalEvaluation++;
+      // Add to totals
+      totalTokens += agentTotalTokens;
+      totalOutputTokens += agentOutputTokens;
 
-          // Calculate cost using agent-specific model pricing
-          const inputTokenCost = ((promptTokens/1000000) * MODEL_PRICING[model].input);
-          const outputTokenCost = ((outputTokens/1000000) * MODEL_PRICING[model].output);
-          totalCost += (inputTokenCost + outputTokenCost);
-        });
-      });
-    }
+      // Calculate cost
+      const inputTokenCost = (agentTotalTokens/1000000) * MODEL_PRICING[model].input;
+      const outputTokenCost = (agentOutputTokens/1000000) * MODEL_PRICING[model].output;
+      totalCost += (inputTokenCost + outputTokenCost);
+
+      return acc + tokens;
+    }, 0);
+
+    console.log("totalTokens", totalTokens);
+    console.log("totalOutputTokens", totalOutputTokens);
+    console.log("countTotalEvaluation", agentCount * qa_count);
+    console.log("totalCost", totalCost.toFixed(4));
 
     // Response
     res.json({
       totalTokens,
       totalOutputTokens,
-      countTotalEvaluation,
+      countTotalEvaluation: agentCount * qa_count,
       totalCost: totalCost.toFixed(4),
     });
   } catch (error) {
